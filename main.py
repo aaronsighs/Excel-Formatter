@@ -5,7 +5,7 @@ import pandas as pd
 import openpyxl
 import os,re,logging,time
 from difflib import SequenceMatcher as seqM
-from datetime import datetime,date
+from datetime import datetime,date,timedelta
 ###############################
 
 
@@ -13,12 +13,13 @@ months = {'jan': '1','feb': '2','mar': '3','apr':'4','may':'5','jun':'6'
 	 ,'jul':'7','aug':'8','sep':'9','oct':'10','nov':'11','dec':'12'}
 
 
-class formater:
+class formatter:
 	def __init__(self, dir="files", **kwargs):
 		self.column_names = kwargs.get("column_names",[])
 		self.settings = kwargs.get("settings",{})
 		self.set_dir(dir)
 		self.flags = {}
+		self.processedFiles = {}
 
 
 
@@ -30,7 +31,7 @@ class formater:
 			self.dir = os.getcwd() + '/files'
 			if not os.path.exists("files"): os.makedirs("files")
 			logging.warning(" directory: '{}' does not exist.\nUsing directory {} instead.".format(dir,self.dir))
-		self.fileList = [file for file in os.listdir(self.dir) if ".xls" in file ]
+		self.fileList = [file for file in os.listdir(self.dir) if ".xls" in file and "~" not in file ]
 
 
 
@@ -50,12 +51,12 @@ class formater:
 	# takes a list of dataframes || single dataframe and returns a list
 	# of dataframes with new column names based on the desired columns names (given or already set)
 	# see set_column_names for further information
-	def set_columns_names(self, dfs, columns=None ,threshold=0.45):
+	def setm_column_names(self, dfs, columns=None ,threshold=0.45):
 		df_list = []
 		if type(dfs) is not list: dfs = [dfs]
 		for df in dfs:
-			df = self.set_column_names(df,colums,threshold)
-			if type(df) is not int:df_list.append(df)
+			df = self.set_column_names(df,columns,threshold)
+			if self.verifyDf(df):df_list.append(df)
 		if not len(df_list): self.raise_flag("set_columns_names",10,"input dataframes are empty")
 		return df_list
 
@@ -105,7 +106,6 @@ class formater:
 		# dropping all the values that were not in my columns list
 		for value in columns: # for value in passed in column list
 			if type(value) is not tuple: value = [value] # make sure the value is a list/tuple type
-			print(value[0],df.columns)
 			if value[0] in df.columns:                   # if value is now in the columns list
 				new_df[value[0]] = df[value[0]]			# add the columns to a new list ignoring uncared for columns
 		return new_df
@@ -135,7 +135,9 @@ class formater:
 
 
 
-
+	# sets a columns  of : 'column_names' in dataframe 'df'
+	# to the corresponding value of 'values'
+	# col df 'column_names[0]' for the whole col = values[0]
 	def set_column_values(self,df,column_names,values):
 		if not self.verifyDf(df): return 0
 		if len(values)!=len(column_names) and len(values)!=0:
@@ -153,7 +155,9 @@ class formater:
 	# dates = [ [m,d,y],...] - > m/d/y for each corresponding column in date_names = ["",...]
 	def set_dates(self,df,dates,date_names):
 
-		if len(dates[0])!=3: return self.raise_flag("setting_dates",13,"dates do not have the correct length")
+		if len(dates[0])!=3:
+			self.raise_flag("setting_dates",13,"dates do not have the correct length")
+			return df
 		dates = ["{}/{}/{}".format(date[0],date[1],date[2]) for date in dates]
 		return self.set_column_values(df,date_names,dates)
 
@@ -161,8 +165,14 @@ class formater:
 
 
 
-
-
+	# removes expired data rows in multiple rows
+	def mul_remove_expired(self,dfs = None, column=None, days_past_today=0):
+		df_list = []
+		if type(dfs) is not list: dfs = [dfs]
+		for df in dfs:
+			df = self.mul_remove_expired(df,column,days_past_today)
+			if self.verifyDf(df): df_list.append(df)
+		return df_list
 
 
 
@@ -194,11 +204,6 @@ class formater:
 
 
 
-
-
-
-
-
 	def get_name_info(self, file_name,key_words={"carrier":["msc",'gmt']}):
 		number_list = []
 		string_list = []
@@ -223,20 +228,7 @@ class formater:
 				else: indx = 1
 				dates[next(sel[indx])][indx] = int(re.sub("[^0-9]", "", number))
 
-			# scenarios
-			# formats: month day - month day year
-			# [m,d,y],[m,d,0]
-			# 	if 1st month  is greater than last month then
-			# 	year1  = year2 - 1
-			# formats: month day year - month day year
-			# [m,d,y],[m,d,y]
-			# 	---> everything is given : good
-			#formats:  day - month day year
-			# [ m, d, y] , [0 , d , 0]
-			#	if day is less than year, than next month = month + 1
-			#  and if month1 is 12 then year1 = year2 - 1 else year1=year2
-			# formats day day month year
-			# [m,d,y] [0,d,y]
+
 
 			# day day month year
 			today = date.today()
@@ -258,9 +250,12 @@ class formater:
 							dates[0][i] = dates[1][i] # replace the value of the 0. position with the opposing date_value
 							# example: date[0][1] : 1st date, sel: day  == 0 (not filled in) then date[0][1] = date[1][1]
 		else:
-			dates = []
+			dates = [[],[]]
 
-
+		# get the found_keywords in the title
+		# loops through all keys in the keywords and all the strings in the text file
+		# and gets the found value and puts it in a dict object : dict [ key:value]
+		# default value is ""
 		found_keywords = {}
 		for key in key_words:
 			for s in string_list:
@@ -276,22 +271,60 @@ class formater:
 
 
 
+	# look at process_file
+	# processes multiple files and returns a list of processesed files
+	# if 'combine' is True then it returns a combined dataframe
+	def process_files(self,dir=None, max_rows=4000, columns=None, key_words={},date_cols=[],combine=False,days_past_today=0,threshold=0.45):
+		if dir is not None: self.set_dir(dir)
+		dfs = []
+		file_list = self.fileList.copy()
+		for file in self.fileList:
+			df = self.process_file(file=file, dir=dir
+			 					   ,max_rows=max_rows
+								   ,columns=columns
+								    ,key_words=key_words
+									 ,date_cols=date_cols
+									 ,days_past_today=days_past_today
+									 ,threshold=threshold)
+			if self.verifyDf(df): dfs.append(df)
+		if not combine:return dfs
+		if not len(dfs): return pd.DataFrame()
+		finalDf = dfs[0]
+		# combines the data frames together
+		for i in range(1,len(dfs)):
+			finalDf = pd.concat( [ finalDf , dfs[i]] ,sort=False )
+		finalDf = pd.DataFrame(finalDf)
+		finalDf = finalDf.reset_index(drop=True)
+		# if set_id is set than add a column with ids, makes it easier to reference sometimes
+		if "set_id" in self.settings and self.settings["set_id"]:
+			finalDf["id"] = finalDf.index
+
+		return finalDf
 
 
 
 
 
 
+	# loads in a file converts it to a dataframe
+	# changes the column names given, based on closest match
+	# looks at the file names and gets information if needed
+	# removes based on expiring_date if set
+	def process_file(self,file, dir=None, max_rows=4000, columns=None, key_words={},date_cols=[],days_past_today=0,threshold=0.45):
+		df = self.load_file(file, max_rows) # if error will raise flag
+		if not self.verifyDf(df): return 0 #  if df is void return
 
-
-
-
-
-
-
-
-
-
+		# have a working df
+		column_names = columns if columns is not None else self.column_names
+		df = self.set_column_names(df,columns=columns,threshold=threshold)   # set our wanted column names
+		dates,found_keywords = self.get_name_info(file,key_words=key_words)  # get dates or keywords from file_name
+		for key in found_keywords:
+			df = self.remove_all_Except(df,column=key,value=found_keywords[key])
+		if len(date_cols)==1: dates = [dates[1]]
+		if len(dates[0]):df = self.set_dates(df,dates,date_cols)
+		if "remove_expired" in self.settings and self.settings['remove_expired'] and len(date_cols):
+			df = self.remove_expired(df,column=date_cols[len(date_cols)-1],days_past_today=days_past_today)
+		return df
 
 
 
@@ -301,10 +334,13 @@ class formater:
 	# and return the list
 	def load_files(self, dir=None, max_rows=4000):
 		df_list = []
+		file_list = []
 		if dir is not None: self.set_dir(dir)
 		for file in self.fileList:
 			df = self.load_file(file,max_rows)
-			if type(df) is not int: df_list.append(df)
+			if type(df) is not int:
+				df_list.append(df)
+				file_list.append(file)
 		return df_list
 
 
@@ -366,14 +402,10 @@ class formater:
 		# remove rows if they have more than '3' nan values per row
 		if main_row == -1: main_row = 0
 		df = pd.read_excel(file_name, skiprows = main_row, usecols= "A:AE", sheet_name = sheet_name)
-		while ( 'Unnamed' in df.columns[0] and 'Unnamed' in df.columns[0]):
+		while ( type(df.columns) is not pd.core.indexes.base.Index or ('Unnamed' in df.columns[0] and 'Unnamed' in df.columns[1])):
 			new_header = df.iloc[0] # get the first row
 			df = df[1:]             # removes the last header
 			df.columns = new_header # sets the header to prv first row
-
-
-
-
 
 		df.columns = df.columns.str.lower()
 		df.drop(remove_list, inplace=True)
@@ -383,44 +415,3 @@ class formater:
 			self.raise_flag("loading",15,name)
 			return 0
 		return df
-
-
-
-col_names = [("pol_region","port of loading"),("carrier","carriers"),
-    ("t_t_to_pod","transit_time"),("pod__via_port","dest (via port)"),
-    ("destination_details","place of delivery"),"effective_date",
-    "expiring_date",("20gp","20'gp"),("40gp","40'GP"),
-    ("40hq","40'HQ"),"comm_details",("rate_remarks","remarks")]
-
-
-
-
-
-
-
-
-
-f = formater(settings={"remove_strikes":1}, column_names = col_names)
-df = f.load_file(f.fileList[2])
-print(df)
-print(df.columns)
-df = f.set_column_names(df,columns=col_names)
-print(df.columns)
-name_info = f.get_name_info(f.fileList[0],key_words={"carrier":["msc","cmk","hapag","maersk"]})
-dates = name_info[0]
-carrier = name_info[1]["carrier"]
-df = f.remove_all_Except(df,column="carrier",value=carrier)
-
-df = f.setm_column_values(df,["carrier"],["dog"])[0]
-
-
-
-
-print(df)
-df = f.set_dates(df,dates,["effective_date","expiring_date"])
-print(df)
-
-
-
-
-print(f.flags)
