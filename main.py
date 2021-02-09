@@ -114,15 +114,30 @@ class formater:
 
 	def verifyDf(self,df = None):
 		if type(df)!=pd.core.frame.DataFrame or df.empty:
-			self.raise_flag("verify",15,"no data in frame")
+			self.raise_flag("verifyDf",15,"no data in frame")
 			return 0
 		return 1
 
 	# set columns in list 'column_names' to a single value in list 'values'
 	# column_names[0] = values[0] and so forth for all rows
-	def setColumnsValues(self,df,column_names,values):
+
+
+	# setm = set multiple
+	# see setColumnValues for more information
+	#takes a list of dfs and returns a list of dfs that were set
+	def setm_column_values(self,dfs,column_names,values):
+		df_list = []
+		if type(dfs) is not list: dfs = [dfs]
+		for df in dfs:
+			df = self.set_column_values(df,column_names,values)
+			if self.verifyDf(df): df_list.append(df)
+		return df_list
+
+
+
+
+	def set_column_values(self,df,column_names,values):
 		if not self.verifyDf(df): return 0
-		columns = df.columns
 		if len(values)!=len(column_names) and len(values)!=0:
 			self.raise_flag("setting_dates",12,"date_names and dates do not have the same length")
 			return df
@@ -140,7 +155,7 @@ class formater:
 
 		if len(dates[0])!=3: return self.raise_flag("setting_dates",13,"dates do not have the correct length")
 		dates = ["{}/{}/{}".format(date[0],date[1],date[2]) for date in dates]
-		return self.setColumnsValues(df,date_names,dates)
+		return self.set_column_values(df,date_names,dates)
 
 
 
@@ -370,4 +385,42 @@ class formater:
 		return df
 
 
-	
+
+col_names = [("pol_region","port of loading"),("carrier","carriers"),
+    ("t_t_to_pod","transit_time"),("pod__via_port","dest (via port)"),
+    ("destination_details","place of delivery"),"effective_date",
+    "expiring_date",("20gp","20'gp"),("40gp","40'GP"),
+    ("40hq","40'HQ"),"comm_details",("rate_remarks","remarks")]
+
+
+
+
+
+
+
+
+
+f = formater(settings={"remove_strikes":1}, column_names = col_names)
+df = f.load_file(f.fileList[2])
+print(df)
+print(df.columns)
+df = f.set_column_names(df,columns=col_names)
+print(df.columns)
+name_info = f.get_name_info(f.fileList[0],key_words={"carrier":["msc","cmk","hapag","maersk"]})
+dates = name_info[0]
+carrier = name_info[1]["carrier"]
+df = f.remove_all_Except(df,column="carrier",value=carrier)
+
+df = f.setm_column_values(df,["carrier"],["dog"])[0]
+
+
+
+
+print(df)
+df = f.set_dates(df,dates,["effective_date","expiring_date"])
+print(df)
+
+
+
+
+print(f.flags)
