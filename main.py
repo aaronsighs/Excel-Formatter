@@ -35,7 +35,7 @@ class formater:
 
 
 
-	def raise_flag(self,type,error,value,max_len=5):
+	def raise_flag(self,type,error,value,return_value=0,max_len=5):
 		# create a list of error-loading files and their  ( error type,value)
 		if type not in  self.flags: self.flags[type] = [(error,value)]
 		# if a list already exists append to it
@@ -44,7 +44,7 @@ class formater:
 			if len(self.flags[type]) == max_len: self.flags[type].pop()
 			self.flags[type].append((error,value))
 		logging.warning("'{}' Error , ref: ({}) -> '{}'".format(type,error,value))
-		return 0
+		return return_value
 
 
 	# takes a list of dataframes || single dataframe and returns a list
@@ -100,7 +100,7 @@ class formater:
 		df.rename(columns=new_names, inplace=True)
 		new_df = pd.DataFrame()
 
-		print("checking",df.columns)
+
 
 		# dropping all the values that were not in my columns list
 		for value in columns: # for value in passed in column list
@@ -118,12 +118,14 @@ class formater:
 			return 0
 		return 1
 
-
+	# set columns in list 'column_names' to a single value in list 'values'
+	# column_names[0] = values[0] and so forth for all rows
 	def setColumnsValues(self,df,column_names,values):
 		if not self.verifyDf(df): return 0
 		columns = df.columns
 		if len(values)!=len(column_names) and len(values)!=0:
-			return self.raise_flag("setting_dates",12,"date_names and dates do not have the same length")
+			self.raise_flag("setting_dates",12,"date_names and dates do not have the same length")
+			return df
 		for i in range(len(values)):
 			df[column_names[i]] = values[i]
 
@@ -131,12 +133,11 @@ class formater:
 
 
 
+	# set the date columns of name 'date_names'
+	# specialized version of setColumnValues, specifically for date data in form;
+	# dates = [ [m,d,y],...] - > m/d/y for each corresponding column in date_names = ["",...]
+	def set_dates(self,df,dates,date_names):
 
-	def set_dates(self,df,dates,date_names = ["",""]):
-		# check to make sure dates are valid
-
-		# assuming valid
-		#make sure date_names are in column_names
 		if len(dates[0])!=3: return self.raise_flag("setting_dates",13,"dates do not have the correct length")
 		dates = ["{}/{}/{}".format(date[0],date[1],date[2]) for date in dates]
 		return self.setColumnsValues(df,date_names,dates)
@@ -150,9 +151,12 @@ class formater:
 
 
 
+	# returns 0 if input df is not valid, or a df if an input column error or if success
 	def remove_expired(self,df = None, column=None, days_past_today=0):
 		if not self.verifyDf(df): return 0
-		if column is None or column not in df.columns: return self.raise_flag("remove_expired",16," error in input column: "+column)
+		if column is None or column not in df.columns:
+			self.raise_flag("remove_expired",16," error in input column: "+column)
+			return df # return unmodified df
 		today = pd.to_datetime(date.today() + timedelta(days=days_past_today))
 		df = df[pd.to_datetime(df[column])>today]
 		df = df[df[column].apply(lambda x: not str(x).isdigit())]
@@ -160,9 +164,12 @@ class formater:
 
 	# inputs -> dataframe: 'df' , name of column : 'column' , value wanted : 'value'
 	# removes all rows that do not contain a column : 'column' with value : 'value'
+	# if df is invalid return 0 else return df, modified or unmodified
 	def remove_all_Except(self,df,column,value):
 		if not self.verifyDf(df): return 0
-		if column not in df.columns: return self.raise_flag("removing_all_except",14," input column did not exist")
+		if column not in df.columns:
+			self.raise_flag("removing_all_except",14," input column did not exist")
+			return df # return unmodified df
 		df.dropna( subset = [column], inplace=True)
 		 # keep only the values in which the column : 'column'
 		 # has the same matching string of value within it, ignoring case
@@ -361,3 +368,6 @@ class formater:
 			self.raise_flag("loading",15,name)
 			return 0
 		return df
+
+
+	
